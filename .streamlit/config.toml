@@ -1,0 +1,18 @@
+[theme]
+base = "light"
+primaryColor = "#F26B1D"            # NovaCell orange: buttons, focus, links
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EEF4FC" # pale blue panels
+textColor = "#0B1F3A"                # deep navy text
+font = "sans serif"
+
+[theme.sidebar]
+backgroundColor = "#0A3A8C"          # NovaCell blue
+secondaryBackgroundColor = "#14489F"
+textColor = "#FFFFFF"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

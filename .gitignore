@@ -1,0 +1,14 @@
+.venv/
+.env
+chroma_store/
+logs/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+.claude/
+.pytest_cache/
+
+# local secrets - never commit
+API Key/
+*.key
+secrets*.txt
