@@ -6,8 +6,11 @@ import html
 
 import streamlit as st
 
-from chain import MissingApiKey, log_feedback, log_interaction, stream_answer
+from assistant import REFUND_REQUEST, RefundAgent, RefundSession, route
+from chain import MissingApiKey, log_feedback, log_interaction, stream_answer, to_history
 from config import ensure_ingested, warm_stores
+from refund_agent import rupees
+from refund_tools import APPROVAL_LIMIT
 from retriever import COLLECTIONS, retrieve
 
 BLUE = "#0A3A8C"
@@ -22,6 +25,13 @@ SAMPLE_QUESTIONS = [
     "My calls keep dropping. What should I do?",
     "How do I check my current data balance?",
     "I can't log in to the NovaCell app.",
+]
+
+REFUND_PROMPTS = [
+    "I want a refund of ₹499.",
+    "I want a refund of ₹999.",
+    "Give me a refund of ₹2,000.",
+    "I want a refund.",
 ]
 
 # (icon, title, blurb, question) for the start-screen topic cards
@@ -132,6 +142,24 @@ st.html(
   .nc-card {{ background: rgba(255,255,255,.1); border-left: 3px solid {ORANGE}; border-radius: 8px;
              padding: 10px 12px; color: #fff; font-size: .85rem; line-height: 1.45; }}
   .nc-foot {{ text-align:center; color:#7A8BA3; font-size:.78rem; margin-top: 8px; }}
+
+  /* refund confirmation card */
+  .st-key-confirm {{ background: #FFF6F0; border: 1.5px solid {ORANGE}; border-radius: 14px; padding: 14px 16px; }}
+  .nc-confirm-h {{ color: {BLUE}; font-weight: 700; font-size: 1.05rem; }}
+  .nc-confirm-s {{ color: #33475F; font-size: .9rem; margin-top: 2px; }}
+  .st-key-confirm_yes button {{ background: {ORANGE}; border-color: {ORANGE}; color: #fff; font-weight: 600; }}
+  .st-key-confirm_yes button:hover {{ background: #D95A10; color: #fff; }}
+  .st-key-confirm_no button {{ background: #fff; border-color: {BLUE}; color: {BLUE}; }}
+  .nc-route {{ display:inline-block; font-size:.72rem; font-weight:700; padding:2px 9px; border-radius:999px;
+              margin-bottom: 6px; }}
+  .nc-steps {{ font-family: ui-monospace, Consolas, monospace; font-size: .8rem; color: {BLUE};
+              white-space: pre-wrap; margin: 0; }}
+
+  /* demo account card (sidebar) */
+  .nc-acct {{ background: rgba(255,255,255,.1); border-radius: 8px; padding: 10px 12px; color:#fff; font-size:.82rem; }}
+  .nc-acct div {{ display:flex; justify-content:space-between; padding: 3px 0; }}
+  .nc-tag {{ font-size:.7rem; font-weight:700; padding:1px 7px; border-radius:999px; }}
+  section[data-testid="stSidebar"] .st-key-reset_account button {{ justify-content: center; font-size: .85rem; }}
 </style>
 """
 )
@@ -148,10 +176,49 @@ warm_up()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "refund" not in st.session_state:
+    st.session_state.refund = RefundSession()  # per-session simulated account + refund state
+
+refund: RefundSession = st.session_state.refund
+agent = RefundAgent()
 
 
 def ask(question: str) -> None:
     st.session_state.pending = question
+
+
+ROUTE_BADGE = {
+    "requirement_inquiry": ("Knowledge answer", "#DCE7F7", BLUE),
+    "refund_request": ("Refund agent", ORANGE, "#FFFFFF"),
+}
+
+
+def render_route(msg: dict) -> None:
+    label, bg, fg = ROUTE_BADGE.get(msg.get("route"), ROUTE_BADGE["requirement_inquiry"])
+    st.html(f"<span class='nc-route' style='background:{bg};color:{fg}'>{label}</span>")
+
+
+def render_steps(events: list[str]) -> None:
+    """agent_PRD section 12: workflow steps only, never model reasoning."""
+    if events:
+        with st.expander(f"Agent steps ({len(events)})", icon=":material/account_tree:"):
+            st.html(f"<pre class='nc-steps'>{html.escape(chr(10).join(events))}</pre>")
+
+
+def render_account_card() -> None:
+    user = refund.store.users[refund.user_id]
+    rows = []
+    for r in sorted(user["recharges"], key=lambda r: r["recharge_age_days"]):
+        if r["refund_status"] == "refunded":
+            tag = ("Refunded", "#2E9E5B")
+        elif r["recharge_id"] in refund.store.support_requests:
+            tag = ("With Support", ORANGE)
+        else:
+            tag = ("Refundable" if r["recharge_age_days"] <= 7 else "Too old", "rgba(255,255,255,.25)")
+        rows.append(f"<div><span>{rupees(r['recharge_amount'])} · {r['recharge_age_days']}d ago</span>"
+                    f"<span class='nc-tag' style='background:{tag[1]}'>{tag[0]}</span></div>")
+    st.html(f"<div class='nc-acct'><div><b>{html.escape(user['name'])}</b><span>{html.escape(user['plan'])} plan</span></div>"
+            + "".join(rows) + "</div>")
 
 
 def render_sources(docs_meta: list[dict]) -> None:
@@ -193,16 +260,25 @@ with st.sidebar:
     )
     for q in SAMPLE_QUESTIONS:
         st.button(q, use_container_width=True, on_click=ask, args=(q,))
+    st.html("<div class='nc-side-h'>Refunds (demo account)</div>")
+    for q in REFUND_PROMPTS:
+        st.button(q, key=f"refund_{q}", use_container_width=True, on_click=ask, args=(q,))
+    account_slot = st.empty()  # filled at the end of the run, after this turn's refund changes
+    if st.button("Reset demo account", key="reset_account", icon=":material/restart_alt:", use_container_width=True):
+        refund.store.reset()
+        refund.clear()
+        st.rerun()
     st.html(
         "<div class='nc-side-h'>Good to know</div>"
-        "<div class='nc-card'>Nova answers only from NovaCell's FAQ, resolved support cases and "
-        "technical guides. It can't see your account, balance or bill. For account help call "
-        "<b>611</b> or use the NovaCell app.</div>"
+        "<div class='nc-card'>Nova answers from NovaCell's FAQ, resolved support cases and technical "
+        f"guides. Refunds use a simulated account: up to <b>{rupees(APPROVAL_LIMIT)}</b> after you confirm, "
+        "larger ones go to our Support Team. No real payment is made.</div>"
     )
     st.write("")
     if st.button("New conversation", key="clear", icon=":material/refresh:", use_container_width=True):
         st.session_state.messages = []
         st.session_state.pop("pending", None)
+        refund.clear()  # also drops any pending refund (agent_PRD section 11)
         st.rerun()
 
 # ---------------------------------------------------------------- header
@@ -230,13 +306,18 @@ if not st.session_state.messages and not question:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=AVATARS[msg["role"]]):
         role_marker(msg["role"])
+        if msg["role"] == "assistant":
+            render_route(msg)
         st.markdown(msg["content"])
-        if msg["role"] == "assistant" and msg.get("sources"):
-            render_sources(msg["sources"])
+        if msg["role"] == "assistant":
+            if msg.get("sources"):
+                render_sources(msg["sources"])
+            render_steps(msg.get("events"))
             render_feedback(msg)
 
 # ---------------------------------------------------------------- new turn
 if question:
+    history = to_history(st.session_state.messages)  # previous turns only (FR-46, FR-50)
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user", avatar=AVATARS["user"]):
         role_marker("user")
@@ -244,31 +325,65 @@ if question:
 
     with st.chat_message("assistant", avatar=AVATARS["assistant"]):
         role_marker("assistant")
-        with st.spinner("Nova is checking NovaCell's knowledge base…"):
-            docs = retrieve(question)
-        try:
-            text = st.write_stream(stream_answer(question, docs))
-        except MissingApiKey as exc:
-            st.error(str(exc), icon=":material/key:")
-            st.session_state.messages.pop()
-            st.stop()
-        except Exception as exc:  # network / API errors
-            if type(exc).__name__ == "RateLimitError":
-                st.warning("Nova is busy right now. Please try again in a minute.", icon=":material/hourglass_top:")
-            else:
-                st.error(f"Sorry, Nova is unavailable right now ({type(exc).__name__}). Please call 611.")
-            st.session_state.messages.pop()
-            st.stop()
+        with st.spinner("Nova is reading your message…"):
+            decision = route(question, refund, history)
 
-        sources = [
-            {k: d.metadata[k] for k in ("collection", "ref", "title", "score")} for d in docs
-        ]
-        interaction_id = log_interaction(question, text, docs, channel="web")
-        msg = {"role": "assistant", "content": text, "sources": sources, "id": interaction_id}
-        st.session_state.messages.append(msg)
-        render_sources(sources)
-        render_feedback(msg)
+        if decision.intent == REFUND_REQUEST:
+            msg = {"role": "assistant", "route": REFUND_REQUEST}
+            render_route(msg)
+            with st.spinner("Checking your account…"):
+                reply = agent.handle(question, refund, history)
+            events = decision.events + reply.events
+            st.markdown(reply.text)
+            msg.update(content=reply.text, events=events,
+                       id=log_interaction(question, reply.text, [], channel="web", route=REFUND_REQUEST, events=events))
+            st.session_state.messages.append(msg)
+            render_steps(events)
+            render_feedback(msg)
+        else:
+            msg = {"role": "assistant", "route": decision.intent}
+            render_route(msg)
+            with st.spinner("Nova is checking NovaCell's knowledge base…"):
+                docs = retrieve(question)  # retrieval query is the question alone (FR-49)
+            try:
+                text = st.write_stream(stream_answer(question, docs, history))
+            except MissingApiKey as exc:
+                st.error(str(exc), icon=":material/key:")
+                st.session_state.messages.pop()
+                st.stop()
+            except Exception as exc:  # network / API errors
+                if type(exc).__name__ == "RateLimitError":
+                    st.warning("Nova is busy right now. Please try again in a minute.", icon=":material/hourglass_top:")
+                else:
+                    st.error(f"Sorry, Nova is unavailable right now ({type(exc).__name__}). Please call 611.")
+                st.session_state.messages.pop()
+                st.stop()
+
+            sources = [
+                {k: d.metadata[k] for k in ("collection", "ref", "title", "score")} for d in docs
+            ]
+            events = decision.events + [f"[RAG] retrieved {len(docs)} documents", "[RAG] grounded answer"]
+            msg.update(content=text, sources=sources, events=events,
+                       id=log_interaction(question, text, docs, channel="web", route=decision.intent, events=events))
+            st.session_state.messages.append(msg)
+            render_sources(sources)
+            render_steps(events)
+            render_feedback(msg)
+
+# ---------------------------------------------------------------- refund confirmation (FR-11, section 11)
+if refund.awaiting_confirmation:
+    with st.container(key="confirm"):
+        st.html(f"<div class='nc-confirm-h'>Refund eligible: {rupees(refund.pending.amount)}</div>"
+                "<div class='nc-confirm-s'>Do you want to proceed with this refund?</div>")
+        c1, c2 = st.columns(2)
+        c1.button("Confirm Refund", key="confirm_yes", icon=":material/check:", use_container_width=True,
+                  on_click=ask, args=("Yes, proceed",))
+        c2.button("Cancel", key="confirm_no", icon=":material/close:", use_container_width=True,
+                  on_click=ask, args=("Cancel",))
+
+with account_slot.container():
+    render_account_card()
 
 if st.session_state.messages:
-    st.html("<div class='nc-foot'>Nova answers from NovaCell's verified help content. "
-            "For anything about your own account, call 611.</div>")
+    st.html("<div class='nc-foot'>Answers come from NovaCell's verified help content. "
+            "Refunds here are simulated; no real payment is made.</div>")
