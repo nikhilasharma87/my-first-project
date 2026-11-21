@@ -13,6 +13,7 @@ textColor = "#FFFFFF"
 
 [client]
 toolbarMode = "minimal"
+showSidebarNavigation = false   # the chat sidebar links to the dashboard itself
 
 [browser]
 gatherUsageStats = false

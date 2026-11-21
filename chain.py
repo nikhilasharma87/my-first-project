@@ -137,12 +137,14 @@ def _now() -> str:
 
 
 def log_interaction(question: str, answer_text: str, docs: list[Document], channel: str,
-                    route: str = "requirement_inquiry", events: list[str] | None = None) -> str:
+                    route: str = "requirement_inquiry", events: list[str] | None = None,
+                    session_id: str | None = None) -> str:
     interaction_id = uuid.uuid4().hex[:12]
     _write_log(
         {
             "type": "interaction",
             "id": interaction_id,
+            "session_id": session_id or interaction_id,  # groups messages into conversations
             "ts": _now(),
             "channel": channel,
             "route": route,

@@ -82,6 +82,31 @@ On the very first start the app downloads the ~80 MB embedding model and builds 
 
 Notes: the files in `data/` become part of the repo (use a private repo if they shouldn't be public). All visitors share your Groq rate limit (free tier: about 2–3 answers a minute). Free apps sleep when idle and take a moment to wake.
 
+## Insights dashboard
+
+Open **Insights dashboard** in the chat sidebar (or `/dashboard`). It reads the conversation log
+(`logs/interactions.jsonl`) and shows, for a chosen period and channel:
+
+- conversations, messages, share answered by Nova, refund requests and helpful rating
+- **what customers ask about**: messages per topic, split into answered / not answered (topic = category of
+  the best-matching FAQ or ticket; refunds have their own topic)
+- messages per day and the most asked questions
+- **knowledge-base actions**, ranked by customer messages affected: write a new FAQ (Nova had no answer),
+  turn a support ticket into an FAQ (only a one-off ticket covers it), review unhelpful answers,
+  strengthen weak content, fix outdated wording (e.g. "MyTelecom", example.com), review unused content;
+  downloadable as CSV
+- refund agent outcomes per conversation and why refunds were refused
+
+To see it with volume before real traffic exists, generate clearly labelled demo data (real retriever and
+refund agent, placeholder answer text, `channel: demo`, separate file; untick *Include demo data* to hide it):
+
+```bash
+.venv/Scripts/python scripts/seed_demo_data.py
+```
+
+The analytics live in `insights.py`; the page is `pages/dashboard.py`. In production, put the dashboard
+behind staff login and move the log to a database.
+
 ## Updating knowledge
 
 Edit files in `data/`, then rebuild locally:

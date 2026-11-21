@@ -3,6 +3,7 @@
 Run:  .venv\\Scripts\\streamlit run app.py
 """
 import html
+import uuid
 
 import streamlit as st
 
@@ -141,6 +142,9 @@ st.html(
                letter-spacing: .08em; opacity: .8; margin: 18px 0 6px; }}
   .nc-card {{ background: rgba(255,255,255,.1); border-left: 3px solid {ORANGE}; border-radius: 8px;
              padding: 10px 12px; color: #fff; font-size: .85rem; line-height: 1.45; }}
+  section[data-testid="stSidebar"] [data-testid="stPageLink"] a {{ background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.22); border-radius: 10px; }}
+  section[data-testid="stSidebar"] [data-testid="stPageLink"] a:hover {{ border-color: {ORANGE}; }}
   .nc-foot {{ text-align:center; color:#7A8BA3; font-size:.78rem; margin-top: 8px; }}
 
   /* refund confirmation card */
@@ -178,6 +182,9 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "refund" not in st.session_state:
     st.session_state.refund = RefundSession()  # per-session simulated account + refund state
+
+if "session_id" not in st.session_state:
+    st.session_state.session_id = uuid.uuid4().hex[:12]  # one conversation, for the insights dashboard
 
 refund: RefundSession = st.session_state.refund
 agent = RefundAgent()
@@ -274,11 +281,13 @@ with st.sidebar:
         f"guides. Refunds use a simulated account: up to <b>{rupees(APPROVAL_LIMIT)}</b> after you confirm, "
         "larger ones go to our Support Team. No real payment is made.</div>"
     )
+    st.page_link("pages/dashboard.py", label="Insights dashboard", icon=":material/insights:")
     st.write("")
     if st.button("New conversation", key="clear", icon=":material/refresh:", use_container_width=True):
         st.session_state.messages = []
         st.session_state.pop("pending", None)
         refund.clear()  # also drops any pending refund (agent_PRD section 11)
+        st.session_state.session_id = uuid.uuid4().hex[:12]
         st.rerun()
 
 # ---------------------------------------------------------------- header
@@ -336,7 +345,8 @@ if question:
             events = decision.events + reply.events
             st.markdown(reply.text)
             msg.update(content=reply.text, events=events,
-                       id=log_interaction(question, reply.text, [], channel="web", route=REFUND_REQUEST, events=events))
+                       id=log_interaction(question, reply.text, [], channel="web", route=REFUND_REQUEST, events=events,
+                                          session_id=st.session_state.session_id))
             st.session_state.messages.append(msg)
             render_steps(events)
             render_feedback(msg)
@@ -364,7 +374,8 @@ if question:
             ]
             events = decision.events + [f"[RAG] retrieved {len(docs)} documents", "[RAG] grounded answer"]
             msg.update(content=text, sources=sources, events=events,
-                       id=log_interaction(question, text, docs, channel="web", route=decision.intent, events=events))
+                       id=log_interaction(question, text, docs, channel="web", route=decision.intent, events=events,
+                                          session_id=st.session_state.session_id))
             st.session_state.messages.append(msg)
             render_sources(sources)
             render_steps(events)

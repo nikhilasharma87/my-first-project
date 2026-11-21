@@ -5,6 +5,7 @@ Refund Agent (type "Yes, proceed" or "Cancel" when asked to confirm).
 """
 import logging
 import sys
+import uuid
 
 from assistant import REFUND_REQUEST, RefundAgent, RefundSession, route
 from chain import MissingApiKey, log_interaction, stream_answer, to_history
@@ -22,6 +23,7 @@ def main():
     messages: list[dict] = []
     session = RefundSession()
     agent = RefundAgent()
+    session_id = uuid.uuid4().hex[:12]
 
     while True:
         try:
@@ -36,6 +38,7 @@ def main():
         if question.lower() == "clear":
             messages.clear()
             session.clear()
+            session_id = uuid.uuid4().hex[:12]
             print("(conversation cleared)\n")
             continue
 
@@ -70,7 +73,8 @@ def main():
             print()
 
         messages += [{"role": "user", "content": question}, {"role": "assistant", "content": answer_text}]
-        log_interaction(question, answer_text, docs, channel="cli", route=decision.intent, events=events)
+        log_interaction(question, answer_text, docs, channel="cli", route=decision.intent, events=events,
+                        session_id=session_id)
 
 
 if __name__ == "__main__":
