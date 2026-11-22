@@ -107,3 +107,4 @@ def test_dashboard_page_renders(monkeypatch, log_path):
     assert not at.exception, at.exception
     text = " ".join(h.value for h in at.get("html"))
     assert "Conversations" in text and "Write a new FAQ" in text
+    assert "Tokens per query" in text and "Savings vs human agents" in text   # Token costs tab

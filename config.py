@@ -1,5 +1,6 @@
 """Shared settings: paths, model names and the local embedding model."""
 import os
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -49,12 +50,20 @@ def get_embeddings():
     return MiniLMEmbeddings()
 
 
-@lru_cache(maxsize=1)
-def get_client():
-    """One persistent Chroma client per process (parallel retrievers share it)."""
-    import chromadb
+_lock = threading.RLock()  # Streamlit runs pages in parallel threads; Chroma's client cache isn't thread-safe
+_client = None
 
-    return chromadb.PersistentClient(path=str(CHROMA_DIR))
+
+def get_client():
+    """One persistent Chroma client per process (parallel retrievers and pages share it)."""
+    global _client
+    if _client is None:
+        with _lock:
+            if _client is None:
+                import chromadb
+
+                _client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    return _client
 
 
 def _open_store(collection: str):
@@ -74,7 +83,9 @@ _stores: dict = {}
 def get_store(collection: str):
     """Open (or create) a persisted Chroma collection; cached per process."""
     if collection not in _stores:
-        _stores[collection] = _open_store(collection)
+        with _lock:
+            if collection not in _stores:
+                _stores[collection] = _open_store(collection)
     return _stores[collection]
 
 
@@ -93,10 +104,11 @@ def ensure_ingested() -> list[str]:
     import ingest_tickets
 
     built = []
-    for module in (ingest_faq, ingest_tickets, ingest_guides):
-        if get_store(module.COLLECTION)._collection.count() == 0:
-            module.main()
-            built.append(module.COLLECTION)
+    with _lock:  # two first visits at once must not both build the same collection
+        for module in (ingest_faq, ingest_tickets, ingest_guides):
+            if get_store(module.COLLECTION)._collection.count() == 0:
+                module.main()
+                built.append(module.COLLECTION)
     return built
 
 

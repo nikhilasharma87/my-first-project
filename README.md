@@ -104,6 +104,27 @@ refund agent, placeholder answer text, `channel: demo`, separate file; untick *I
 .venv/Scripts/python scripts/seed_demo_data.py
 ```
 
+### Token costs tab
+
+An interactive version of the *RAG Cost Estimation* workbook (Inference, Embedding and Cost Savings
+sheets). **Start from** pre-fills every input either with the workbook's assumptions (it then
+reproduces the workbook: $1,197/month on GPT-6.2 Sol, $1.11 embedding, 71% savings) or with values
+measured from Nova, and every value stays editable:
+
+| Workbook assumption | Measured from |
+|---|---|
+| User query, output tokens | logged questions and real answers (demo placeholders and fallbacks excluded) |
+| System prompt | the grounding prompt in `chain.py` |
+| FAQs / tickets / PDFs per query | the documents actually retrieved for each logged answer |
+| Knowledge-base tokens | every chunk stored in ChromaDB |
+| Share of queries the bot handles | the answered rate in the log; the rest goes back to human agents |
+
+It also adds what the workbook leaves out: the conversation history sent with each answer and the
+intent-classifier call per message. Tokens are words × *tokens per word* (1.3 by default); Groq's own
+input/output counts are now logged with every answer (`usage` in the log) and shown as a check.
+Model prices are an editable table (add your Groq price), and the scenario downloads as JSON.
+The cost model is `costs.py` (tested in `tests/test_costs.py`); the tab is `cost_view.py`.
+
 The analytics live in `insights.py`; the page is `pages/dashboard.py`. In production, put the dashboard
 behind staff login and move the log to a database.
 
@@ -140,7 +161,8 @@ The tests swap Groq for fake models and check ingestion counts, retrieval, promp
 | `refund_data.py` | Hard-coded demo account and per-session store |
 | `app.py` | Streamlit chat: topic cards, sample questions, streamed answers, Sources panel, 👍/👎 |
 | `main.py` | CLI REPL; `quit` exits |
-| `logs/interactions.jsonl` | One line per answer (question, answer, sources, fallback flag) and per feedback click |
+| `costs.py`, `cost_view.py` | Token cost model and the dashboard's Token costs tab |
+| `logs/interactions.jsonl` | One line per answer (question, answer, sources, fallback flag, Groq token usage) and per feedback click |
 
 ## Grounding rules (in `chain.py`)
 

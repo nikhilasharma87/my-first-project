@@ -356,7 +356,8 @@ if question:
             with st.spinner("Nova is checking NovaCell's knowledge base…"):
                 docs = retrieve(question)  # retrieval query is the question alone (FR-49)
             try:
-                text = st.write_stream(stream_answer(question, docs, history))
+                usage = {}
+                text = st.write_stream(stream_answer(question, docs, history, usage))
             except MissingApiKey as exc:
                 st.error(str(exc), icon=":material/key:")
                 st.session_state.messages.pop()
@@ -375,7 +376,7 @@ if question:
             events = decision.events + [f"[RAG] retrieved {len(docs)} documents", "[RAG] grounded answer"]
             msg.update(content=text, sources=sources, events=events,
                        id=log_interaction(question, text, docs, channel="web", route=decision.intent, events=events,
-                                          session_id=st.session_state.session_id))
+                                          session_id=st.session_state.session_id, usage=usage))
             st.session_state.messages.append(msg)
             render_sources(sources)
             render_steps(events)

@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from typing import Iterator
 
 from langchain_core.documents import Document
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -109,12 +108,26 @@ def _strip_think(tokens: Iterator[str]) -> Iterator[str]:
         yield buffer
 
 
-def stream_answer(question: str, docs: list[Document], history: list | None = None) -> Iterator[str]:
+def _texts(chunks, usage: dict | None) -> Iterator[str]:
+    """Yield the text of each streamed chunk; copy Groq's token counts into `usage`."""
+    for chunk in chunks:
+        meta = getattr(chunk, "usage_metadata", None)
+        if usage is not None and meta:
+            usage.update(input_tokens=meta.get("input_tokens", 0), output_tokens=meta.get("output_tokens", 0))
+        text = chunk.content if isinstance(chunk.content, str) else ""
+        if text:
+            yield text
+
+
+def stream_answer(question: str, docs: list[Document], history: list | None = None,
+                  usage: dict | None = None) -> Iterator[str]:
     """Stream the grounded answer token by token. `history` (LangChain messages)
-    goes to the LLM only; retrieval already happened on the question alone."""
-    chain = prompt | get_llm() | StrOutputParser()
+    goes to the LLM only; retrieval already happened on the question alone.
+    Pass a dict as `usage` to receive Groq's real input/output token counts."""
+    chain = prompt | get_llm()
     yield from _strip_think(
-        chain.stream({"question": question, "context": format_context(docs), "history": history or []})
+        _texts(chain.stream({"question": question, "context": format_context(docs), "history": history or []}),
+               usage)
     )
 
 
@@ -138,7 +151,8 @@ def _now() -> str:
 
 def log_interaction(question: str, answer_text: str, docs: list[Document], channel: str,
                     route: str = "requirement_inquiry", events: list[str] | None = None,
-                    session_id: str | None = None) -> str:
+                    session_id: str | None = None, usage: dict | None = None) -> str:
+    """`usage`: real LLM token counts for this answer ({input_tokens, output_tokens}), if known."""
     interaction_id = uuid.uuid4().hex[:12]
     _write_log(
         {
@@ -156,6 +170,7 @@ def log_interaction(question: str, answer_text: str, docs: list[Document], chann
                 {"collection": d.metadata["collection"], "ref": d.metadata["ref"], "score": d.metadata["score"]}
                 for d in docs
             ],
+            **({"usage": usage} if usage else {}),
         }
     )
     return interaction_id

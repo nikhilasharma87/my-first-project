@@ -52,13 +52,13 @@ def main():
             if reply.needs_confirmation:
                 print("     Reply 'Yes, proceed' to confirm or 'Cancel'.")
             print("\nSteps:\n  " + "\n  ".join(events) + "\n")
-            answer_text, docs = reply.text, []
+            answer_text, docs, usage = reply.text, [], {}
         else:
             docs = retrieve(question)
             print("Bot: ", end="", flush=True)
-            parts = []
+            parts, usage = [], {}
             try:
-                for token in stream_answer(question, docs, history):
+                for token in stream_answer(question, docs, history, usage):
                     parts.append(token)
                     print(token, end="", flush=True)
             except MissingApiKey as exc:
@@ -74,7 +74,7 @@ def main():
 
         messages += [{"role": "user", "content": question}, {"role": "assistant", "content": answer_text}]
         log_interaction(question, answer_text, docs, channel="cli", route=decision.intent, events=events,
-                        session_id=session_id)
+                        session_id=session_id, usage=usage)
 
 
 if __name__ == "__main__":
